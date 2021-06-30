@@ -19,6 +19,31 @@ def execute_query(query):
     return result
 
 
+def validate_amount(amount):
+    if amount.isdigit():
+        return int(amount)
+    return None
+
+
+def validate_measure(measure):
+    if the_measure == "":
+        return execute_query('SELECT measure_id from measures '
+                             'WHERE measure_name = ""').fetchone()[0]
+    rows = execute_query(f'SELECT measure_id from measures '
+                         f'WHERE measure_name LIKE "{measure}%"').fetchall()
+    if len(rows) == 1:
+        return int(rows[0][0])
+    return None
+
+
+def validate_ingredient(ingredient):
+    rows = execute_query(f'SELECT ingredient_id from ingredients '
+                         f'WHERE ingredient_name LIKE "%{ingredient}%"').fetchall()
+    if len(rows) == 1:
+        return rows[0][0]
+    return None
+
+
 meals_tbl = '''
 CREATE TABLE meals (
     meal_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,12 +83,25 @@ CREATE TABLE serve (
 );
 '''
 
-print("CREATING TABLES....")
+quantity_tbl = '''
+CREATE TABLE quantity (
+    quantity_id INTEGER PRIMARY KEY,
+    measure_id INTEGER NOT NULL,
+    ingredient_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    recipe_id INTEGER NOT NULL,
+    FOREIGN KEY(measure_id) REFERENCES measures(measure_id),
+    FOREIGN KEY(ingredient_id) REFERENCES ingredients(ingredient_id)
+    FOREIGN KEY(recipe_id) REFERENCES recipes(recipe_id)
+);
+'''
+
+tables = [meals_tbl, ingredients_tbl, measures_tbl, recipes_tbl, serve_tbl, quantity_tbl]
+
 execute_query("PRAGMA foreign_keys = ON;")
-for insert_query in [meals_tbl, ingredients_tbl, measures_tbl, recipes_tbl, serve_tbl]:
+for insert_query in tables:
     execute_query(insert_query)
 
-print("POPULATING TABLES....")
 data = {"meals": ("breakfast", "brunch", "lunch", "supper"),
         "ingredients": ("milk", "cacao", "strawberry", "blueberry", "blackberry", "sugar"),
         "measures": ("ml", "g", "l", "cup", "tbsp", "tsp", "dsp", "")}
@@ -89,7 +127,21 @@ while True:
     meal_choices = [int(x) for x in input("When the dish can be served: ").split()]
     for meal_id in meal_choices:
         insert_query = f'INSERT INTO serve (recipe_id, meal_id) ' \
-                       f'VALUES ("{recipe_id}", "{meal_id}")'
+                       f'VALUES ({recipe_id}, {meal_id})'
         execute_query(insert_query)
-
+    while True:
+        quantity_input = [x for x in input("Input quantity of ingredient <press enter to stop>: ").split()]
+        if len(quantity_input) == 0:
+            break
+        the_amount, the_ingredient = [quantity_input[0], quantity_input[-1]]
+        the_measure = "" if len(quantity_input) == 2 else quantity_input[1]
+        quantity = validate_amount(the_amount)
+        measure_id = validate_measure(the_measure)
+        ingredient_id = validate_ingredient(the_ingredient)
+        if None in [quantity, measure_id, ingredient_id]:
+            print("The ingredient is not conclusive!")
+        else:
+            insert_query = f'INSERT INTO quantity (measure_id, ingredient_id, quantity, recipe_id) ' \
+                           f'VALUES ({measure_id}, {ingredient_id}, {quantity}, {recipe_id})'
+            execute_query(insert_query)
 conn.close()

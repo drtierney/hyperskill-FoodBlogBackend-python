@@ -1,6 +1,6 @@
 import sys
-import sqlite3
 import os
+import sqlite3
 
 args = sys.argv
 database_name = args[1]
@@ -10,7 +10,14 @@ if os.path.exists(database_name):
     os.remove(database_name)
 
 conn = sqlite3.connect(database_name)
-cur = conn.cursor()
+
+
+def execute_query(query):
+    cur = conn.cursor()
+    result = cur.execute(query)
+    conn.commit()
+    return result
+
 
 meals_tbl = '''
 CREATE TABLE meals (
@@ -33,13 +40,18 @@ CREATE TABLE measures (
 );
 '''
 
-print("CREATING TABLES....")
-for query in [meals_tbl, ingredients_tbl, measures_tbl]:
-    print(f"TABLE CREATED: {query.split()[2]}.")
-    cur.execute(query)
-    conn.commit()
+recipes_tbl = '''
+CREATE TABLE recipes (
+    recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe_name TEXT NOT NULL,
+    recipe_description TEXT
+);
+'''
 
-print()
+print("CREATING TABLES....")
+for insert_query in [meals_tbl, ingredients_tbl, measures_tbl, recipes_tbl]:
+    execute_query(insert_query)
+
 print("POPULATING TABLES....")
 data = {"meals": ("breakfast", "brunch", "lunch", "supper"),
         "ingredients": ("milk", "cacao", "strawberry", "blueberry", "blackberry", "sugar"),
@@ -47,9 +59,18 @@ data = {"meals": ("breakfast", "brunch", "lunch", "supper"),
 
 for table in data.keys():
     for item in data[table]:
-        query = f'INSERT INTO {table} ({table[:-1]}_name)\nVALUES ("{item}");'
-        cur.execute(query)
-        conn.commit()
-    print(f"{table} -> ", cur.execute(f"select * from {table};").fetchall())
+        insert_query = f'INSERT INTO {table} ({table[:-1]}_name)\nVALUES ("{item}");'
+        execute_query(insert_query)
+    output = execute_query(f"select * from {table};")
+    print(f"{table} -> ", output.fetchall())
 
+print("Pass the empty recipe name to exit.")
+while True:
+    recipe_name = input("Recipe name: ")
+    if recipe_name == "":
+        break
+    recipe_description = input("Recipe description: ")
+    insert_query = f'INSERT INTO recipes (recipe_name, recipe_description) ' \
+                   f'VALUES ("{recipe_name}", "{recipe_description}")'
+    execute_query(insert_query)
 conn.close()

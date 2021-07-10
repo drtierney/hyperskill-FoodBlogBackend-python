@@ -1,20 +1,24 @@
-import sys
-import os
 import sqlite3
+from sqlite3 import OperationalError
+import argparse
 
-args = sys.argv
-database_name = args[1]
+parser = argparse.ArgumentParser()
+parser.add_argument("db_name")
+parser.add_argument("--ingredients", default=argparse.SUPPRESS)
+parser.add_argument("--meals", default=argparse.SUPPRESS)
 
-# Fails to create tables if they already exist; quicker to delete db file than drop tables
-if os.path.exists(database_name):
-    os.remove(database_name)
+args = parser.parse_args()
 
-conn = sqlite3.connect(database_name)
+conn = sqlite3.connect(args.db_name)
+
+data = {"meals": ("breakfast", "brunch", "lunch", "supper"),
+        "ingredients": ("milk", "cacao", "strawberry", "blueberry", "blackberry", "sugar"),
+        "measures": ("ml", "g", "l", "cup", "tbsp", "tsp", "dsp", "")}
 
 
-def execute_query(query):
+def execute_query(command):
     cur = conn.cursor()
-    result = cur.execute(query)
+    result = cur.execute(command)
     conn.commit()
     return result
 
@@ -44,104 +48,81 @@ def validate_ingredient(ingredient):
     return None
 
 
-meals_tbl = '''
-CREATE TABLE meals (
-    meal_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    meal_name TEXT UNIQUE NOT NULL
-);
-'''
+def execute_queries_from_file(filename):
+    with open(filename, "r") as f:
+        content = f.read()
+        queries = content.split(";")
+    for command in queries:
+        try:
+            execute_query(command)
+        except OperationalError as opErr:
+            print(f"{opErr}")
 
-ingredients_tbl = '''
-CREATE TABLE ingredients (
-    ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ingredient_name TEXT UNIQUE NOT NULL
-);
-'''
-
-measures_tbl = '''
-CREATE TABLE measures (
-    measure_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    measure_name TEXT UNIQUE
-);
-'''
-
-recipes_tbl = '''
-CREATE TABLE recipes (
-    recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recipe_name TEXT NOT NULL,
-    recipe_description TEXT
-);
-'''
-
-serve_tbl = '''
-CREATE TABLE serve (
-    serve_id INTEGER PRIMARY KEY,
-    recipe_id INTEGER NOT NULL,
-    meal_id INTEGER NOT NULL,
-    FOREIGN KEY(recipe_id) REFERENCES recipes(recipe_id),
-    FOREIGN KEY(meal_id) REFERENCES meals(meal_id)
-);
-'''
-
-quantity_tbl = '''
-CREATE TABLE quantity (
-    quantity_id INTEGER PRIMARY KEY,
-    measure_id INTEGER NOT NULL,
-    ingredient_id INTEGER NOT NULL,
-    quantity INTEGER NOT NULL,
-    recipe_id INTEGER NOT NULL,
-    FOREIGN KEY(measure_id) REFERENCES measures(measure_id),
-    FOREIGN KEY(ingredient_id) REFERENCES ingredients(ingredient_id)
-    FOREIGN KEY(recipe_id) REFERENCES recipes(recipe_id)
-);
-'''
-
-tables = [meals_tbl, ingredients_tbl, measures_tbl, recipes_tbl, serve_tbl, quantity_tbl]
 
 execute_query("PRAGMA foreign_keys = ON;")
-for insert_query in tables:
-    execute_query(insert_query)
-
-data = {"meals": ("breakfast", "brunch", "lunch", "supper"),
-        "ingredients": ("milk", "cacao", "strawberry", "blueberry", "blackberry", "sugar"),
-        "measures": ("ml", "g", "l", "cup", "tbsp", "tsp", "dsp", "")}
+execute_queries_from_file("create_tables.sql")
 
 for table in data.keys():
     for item in data[table]:
-        insert_query = f'INSERT INTO {table} ({table[:-1]}_name)\nVALUES ("{item}");'
-        execute_query(insert_query)
+        item_exists = execute_query(f"SELECT * FROM {table} WHERE {table[:-1]}_name = '{item}'").fetchone()
+        if not item_exists:
+            execute_query(f'INSERT INTO {table} ({table[:-1]}_name)\nVALUES ("{item}");')
     output = execute_query(f"select * from {table};")
-    print(f"{table} -> ", output.fetchall())
 
-print("Pass the empty recipe name to exit.")
-while True:
-    recipe_name = input("Recipe name: ")
-    if recipe_name == "":
-        break
-    recipe_description = input("Recipe description: ")
-    insert_query = f'INSERT INTO recipes (recipe_name, recipe_description) ' \
-                   f'VALUES ("{recipe_name}", "{recipe_description}")'
-    recipe_id = execute_query(insert_query).lastrowid
+if all({"ingredients", "meals" in args}):
+    ingredients = str(args.ingredients).split(",")
+    meals = str(args.meals).split(",")
 
-    print(' '.join('%s) %s' % meal for meal in execute_query("select * from meals;").fetchall()))
-    meal_choices = [int(x) for x in input("When the dish can be served: ").split()]
-    for meal_id in meal_choices:
-        insert_query = f'INSERT INTO serve (recipe_id, meal_id) ' \
-                       f'VALUES ({recipe_id}, {meal_id})'
-        execute_query(insert_query)
+    quantity, serve, output = [], [], []
+    for ingredient_name in ingredients:
+        query = f"SELECT recipe_id FROM quantity WHERE ingredient_id IN " \
+                f"(SELECT ingredient_id FROM ingredients WHERE ingredient_name = '{ingredient_name}')"
+        quantity.append(set(recipe_id[0] for recipe_id in execute_query(query)))
+    quantity = set.intersection(*quantity)
+
+    for meal_name in meals:
+        query = f"SELECT recipe_id FROM serve WHERE meal_id IN " \
+                f"(SELECT meal_id FROM meals WHERE meal_name = '{meal_name}')"
+        serve.append(set(recipe_id[0] for recipe_id in execute_query(query)))
+    for item in [*serve]:
+        for item_ in item:
+            if item_ in quantity:
+                output.append(item_)
+    recipes = ", ".join([execute_query(f"SELECT recipe_name FROM recipes WHERE recipe_id = '{recipe_id}'").fetchone()[0]
+                         for recipe_id in output])
+    print(f"Recipes selected for you: {recipes}" if recipes else "There are no such recipes in the database.")
+
+else:
+    print("Pass the empty recipe name to exit.")
     while True:
-        quantity_input = [x for x in input("Input quantity of ingredient <press enter to stop>: ").split()]
-        if len(quantity_input) == 0:
+        recipe_name = input("Recipe name: ")
+        if recipe_name == "":
             break
-        the_amount, the_ingredient = [quantity_input[0], quantity_input[-1]]
-        the_measure = "" if len(quantity_input) == 2 else quantity_input[1]
-        quantity = validate_amount(the_amount)
-        measure_id = validate_measure(the_measure)
-        ingredient_id = validate_ingredient(the_ingredient)
-        if None in [quantity, measure_id, ingredient_id]:
-            print("The ingredient is not conclusive!")
-        else:
-            insert_query = f'INSERT INTO quantity (measure_id, ingredient_id, quantity, recipe_id) ' \
-                           f'VALUES ({measure_id}, {ingredient_id}, {quantity}, {recipe_id})'
+        recipe_description = input("Recipe description: ")
+        insert_query = f'INSERT INTO recipes (recipe_name, recipe_description) ' \
+                       f'VALUES ("{recipe_name}", "{recipe_description}")'
+        recipe_id = execute_query(insert_query).lastrowid
+
+        print(' '.join('%s) %s' % meal for meal in execute_query("select * from meals;").fetchall()))
+        meal_choices = [int(x) for x in input("When the dish can be served: ").split()]
+        for meal_id in meal_choices:
+            insert_query = f'INSERT INTO serve (recipe_id, meal_id) ' \
+                           f'VALUES ({recipe_id}, {meal_id})'
             execute_query(insert_query)
+        while True:
+            quantity_input = [x for x in input("Input quantity of ingredient <press enter to stop>: ").split()]
+            if len(quantity_input) == 0:
+                break
+            the_amount, the_ingredient = [quantity_input[0], quantity_input[-1]]
+            the_measure = "" if len(quantity_input) == 2 else quantity_input[1]
+            the_quantity = validate_amount(the_amount)
+            measure_id = validate_measure(the_measure)
+            ingredient_id = validate_ingredient(the_ingredient)
+            if None in [the_quantity, measure_id, ingredient_id]:
+                print("The ingredient is not conclusive!")
+            else:
+                insert_query = f'INSERT INTO quantity (measure_id, ingredient_id, quantity, recipe_id) ' \
+                               f'VALUES ({measure_id}, {ingredient_id}, {the_quantity}, {recipe_id})'
+                execute_query(insert_query)
+
 conn.close()
